@@ -1,5 +1,8 @@
 # deepseek-peak — a peak / off-peak chip for the Hermes Desktop status bar
 
+[![verify](https://github.com/antonbru/deepseek-peak/actions/workflows/verify.yml/badge.svg)](https://github.com/antonbru/deepseek-peak/actions/workflows/verify.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 A [Hermes Desktop](https://hermes-agent.nousresearch.com/docs) disk plugin: the bottom
 status bar gets a chip that answers one question at a glance — **is DeepSeek on its
 peak tariff right now?**

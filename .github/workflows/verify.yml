@@ -1,0 +1,21 @@
+name: verify
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  offline-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # The harness stubs @hermes/plugin-sdk + react and loads plugin.js through
+      # the real ESM loader, then runs the suite once per timezone.
+      - name: Run the offline plugin suite
+        working-directory: verify
+        run: node verify.mjs
