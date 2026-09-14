@@ -5,8 +5,13 @@
  * `@hermes/plugin-sdk` / `react` / `react/jsx-runtime` (node_modules here), so
  * import errors, missing identifiers and logic bugs surface without the app.
  *
+ * The suite runs itself once per timezone (Europe/Moscow, UTC, America/New_York)
+ * because the panel prints device-local times: `TZ` is the only way to make the
+ * plugin resolve a different zone.
+ *
  * Run: node verify.mjs   (from this directory)
  */
+import { spawnSync } from 'node:child_process'
 import { copyFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,23 +19,52 @@ import { fileURLToPath } from 'node:url'
 import { notifications } from '@hermes/plugin-sdk'
 import { renderComponent } from 'react'
 
+const self = fileURLToPath(import.meta.url)
+const here = dirname(self)
+
+/* ------------------------------------------------------------ zone runner */
+
+const ZONES = ['Europe/Moscow', 'UTC', 'America/New_York']
+
+if (!process.env.VERIFY_CHILD) {
+  let failed = 0
+
+  for (const zone of ZONES) {
+    console.log(`\n=== TZ=${zone} ===`)
+    const result = spawnSync(process.execPath, [self], {
+      env: { ...process.env, TZ: zone, VERIFY_CHILD: '1' },
+      stdio: 'inherit'
+    })
+
+    if (result.status !== 0) failed++
+  }
+
+  console.log(
+    failed ? `\n❌ ${failed}/${ZONES.length} timezone suites failed` : `\n✅ all ${ZONES.length} timezone suites passed`
+  )
+
+  process.exit(failed ? 1 : 0)
+}
+
 // The plugin imports bare specifiers, so it must be loaded from a directory
 // that resolves them — copy it beside the stubs in node_modules/ first.
-const here = dirname(fileURLToPath(import.meta.url))
-
 copyFileSync(join(here, '..', 'plugin.js'), join(here, 'plugin.js'))
 
 const {
   default: plugin,
+  deviceTimeZone,
   humanDuration,
+  localWindowsLabel,
   preciseDuration,
   shortDuration,
   tariffAt,
-  tzClock
+  tzClock,
+  zoneShortName
 } = await import('./plugin.js')
 
 let failures = 0
 let checks = 0
+const zone = deviceTimeZone()
 
 function check(name, actual, expected) {
   checks++
@@ -51,6 +85,18 @@ function checkMatch(name, haystack, needle) {
   if (!ok) {
     failures++
     console.log(`FAIL ${name}\n  "${needle}" not found in: ${JSON.stringify(haystack).slice(0, 400)}`)
+  } else {
+    console.log(`ok   ${name}`)
+  }
+}
+
+function checkRegex(name, value, pattern) {
+  checks++
+  const ok = typeof value === 'string' && pattern.test(value)
+
+  if (!ok) {
+    failures++
+    console.log(`FAIL ${name}\n  ${pattern} does not match: ${JSON.stringify(value).slice(0, 200)}`)
   } else {
     console.log(`ok   ${name}`)
   }
@@ -83,13 +129,11 @@ for (const [iso, peak, changeIso, label] of CASES) {
   check(`tariff ${label}: next boundary`, state.changesAt, Date.parse(changeIso))
 }
 
-/* -------------------------------------------------------- timezone reading */
+/* ---------------------------------------------------------- zone reading */
 
-check('tzClock MSK time', tzClock(NOON, 'Europe/Moscow').time, '09:08')
-check('tzClock MSK weekday', tzClock(NOON, 'Europe/Moscow').weekday, 1)
-check('tzClock MSK stamp', tzClock(NOON, 'Europe/Moscow').stamp, 'Mon 14 Sep')
-check('tzClock UTC time', tzClock(NOON, 'UTC').time, '06:08')
-check('tzClock Beijing time', tzClock(NOON, 'Asia/Shanghai').time, '14:08')
+check('device zone comes from the environment', zone, process.env.TZ)
+check('tzClock reads a wall clock', tzClock(NOON, zone).time, new Date(NOON).toLocaleTimeString('en-GB', { timeZone: zone, hour12: false, hour: '2-digit', minute: '2-digit' }))
+checkRegex('zoneShortName looks like a zone label', zoneShortName(NOON, zone), /^(UTC|GMT[+-]\d{1,2})/)
 
 /* ------------------------------------------------------------- formatting */
 
@@ -105,7 +149,6 @@ check('shortDuration 30m', shortDuration(30 * 60_000), '30m')
 /* ------------------------------------------------------------ plugin wiring */
 
 const contributions = []
-const storage = new Map()
 const ctx = {
   source: 'plugin:deepseek-peak',
   register: contribution => {
@@ -118,11 +161,7 @@ const ctx = {
 
     return () => {}
   },
-  storage: {
-    get: (key, fallback) => (storage.has(key) ? storage.get(key) : fallback),
-    set: (key, value) => storage.set(key, value),
-    remove: key => storage.delete(key)
-  },
+  storage: { get: (key, fallback) => fallback, set: () => {}, remove: () => {} },
   i18n: { register: () => {}, t: key => key },
   onDispose: () => {},
   rest: async () => ({}),
@@ -191,59 +230,81 @@ function renderChip(ms) {
   const chip = contributions.find(c => c.id === 'chip')
   const element = chip.render()
   const rendered = renderComponent(element.type, element.props)
+  const texts = collectStrings(rendered)
 
-  return { element: rendered, text: collectStrings(rendered).join(' | ') }
+  return { element: rendered, texts, text: texts.join(' | ') }
 }
 
 const peakView = renderChip(NOON)
+
 check('chip reticks every second', intervals, [1000])
-checkMatch('chip shows peak', peakView.text, '🔴 peak · 3:52')
-checkMatch('popover headline', peakView.text, 'Peak now (price ×2)')
-checkMatch('popover clock in MSK', peakView.text, '09:08 MSK · Mon 14 Sep')
-checkMatch('popover countdown to off-peak', peakView.text, 'Off-peak at 13:00 MSK — in 3 h 52 min 0 s')
-checkMatch('popover current window', peakView.text, 'today 09:00–13:00')
-checkMatch('popover window running marker', peakView.text, 'running now')
-checkMatch('popover schedule note', peakView.text, 'weekdays 01:00–04:00 and 06:00–10:00 UTC')
-checkMatch('popover timezone picker label', peakView.text, 'Timezone')
+checkMatch('chip shows peak + countdown', peakView.text, '🔴 peak · 3:52')
+checkMatch('panel headline', peakView.text, 'Peak now (price ×2)')
+checkRegex('panel clock line', peakView.text, /(\d{2}:\d{2}) (UTC|GMT[+-]\d{1,2}) · Mon 14 Sep/)
+checkMatch('panel countdown to off-peak', peakView.text, '— in 3 h 52 min 0 s')
+checkMatch('panel schedule in local time', peakView.text, '(your time)')
+check('panel is four lines, no tab strip', collectStrings(findElement(peakView.element, node => node.type && node.type.name === 'PopoverContent').props.children).length, 4)
+check(
+  'panel has no timezone switcher',
+  findElement(peakView.element, node => node.type && node.type.name === 'SegmentedControl'),
+  null
+)
 
 const tickedView = renderChip(NOON + 6_000)
-checkMatch('countdown ticks down with the clock', tickedView.text, 'Off-peak at 13:00 MSK — in 3 h 51 min 54 s')
+
+checkMatch('countdown ticks down with the clock', tickedView.text, '— in 3 h 51 min 54 s')
 
 const offPeakView = renderChip(Date.parse('2026-09-14T00:30:00Z'))
+
 checkMatch('chip shows off-peak + countdown', offPeakView.text, '🟢 off-peak · 30m')
-checkMatch('popover next peak line', offPeakView.text, 'Peak at 04:00 MSK')
-checkMatch('popover upcoming window', offPeakView.text, 'today 04:00–07:00')
+checkMatch('panel points at the coming peak', offPeakView.text, 'Peak at ')
+checkMatch('off-peak panel keeps the schedule line', offPeakView.text, '(your time)')
 
 const weekendView = renderChip(Date.parse('2026-09-19T12:00:00Z'))
-checkMatch('weekend off-peak', weekendView.text, '🟢 off-peak')
-checkMatch('weekend next peak is Monday', weekendView.text, 'Mon 21 Sep 04:00–07:00')
 
-/* -------------------------------------------------------- timezone picker */
+checkMatch('weekend is off-peak', weekendView.text, '🟢 off-peak')
 
-const segment = findElement(peakView.element, node => node.type && node.type.name === 'SegmentedControl')
+const trigger = findElement(peakView.element, node => node.props && typeof node.props.title === 'string')
 
-check('segmented control rendered', Boolean(segment), true)
-check('segmented options', segment.props.options.map(o => o.id).includes('Europe/Moscow'), true)
+checkMatch('hover text keeps the UTC schedule', trigger.props.title, 'weekdays 01:00–04:00 and 06:00–10:00 UTC, weekends off-peak')
 
-segment.props.onChange('UTC')
+/* ------------------------------------------------- per-zone expectations */
 
-const utcView = renderChip(NOON)
+const label = localWindowsLabel(NOON, zone)
 
-checkMatch('chip follows selected timezone', utcView.text, '06:08 UTC')
-checkMatch('windows re-render in UTC', utcView.text, 'today 06:00–10:00')
-check('timezone persisted to storage', storage.get('timezone'), 'UTC')
+if (zone === 'Europe/Moscow') {
+  check('MSK local windows', label, 'weekdays 04:00–07:00 and 09:00–13:00')
+  checkMatch('MSK clock line', peakView.text, '09:08 GMT+3 · Mon 14 Sep')
+  checkMatch('MSK countdown', peakView.text, 'Off-peak at 13:00 — in 3 h 52 min 0 s')
+  checkMatch('MSK off-peak panel names the local peak start', offPeakView.text, 'Peak at 04:00 — in 30 min 0 s')
+} else if (zone === 'UTC') {
+  check('UTC local windows', label, 'weekdays 01:00–04:00 and 06:00–10:00')
+  checkMatch('UTC clock line', peakView.text, '06:08 UTC · Mon 14 Sep')
+  checkMatch('UTC countdown', peakView.text, 'Off-peak at 10:00 — in 3 h 52 min 0 s')
+} else {
+  checkRegex('day-shifted zone gets explicit day names', label, /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{2}:\d{2}–\d{2}:\d{2}, (Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{2}:\d{2}–\d{2}:\d{2}$/)
+  checkRegex('day-shifted clock line', peakView.text, /(\d{2}:\d{2}) GMT[+-]\d{1,2} · Mon 14 Sep/)
+  check('day-shifted schedule is not called "weekdays"', label.startsWith('weekdays'), false)
+}
 
 /* ----------------------------------------------------------- palette run */
 
 notifications.length = 0
+Date.now = () => NOON
 contributions.find(c => c.id === 'status').data.run()
+
 check('palette command notifies once', notifications.length, 1)
-checkMatch('palette message mentions peak', notifications[0].message, 'peak right now')
-checkMatch('palette message carries the clock', notifications[0].message, '(06:08 UTC)')
+checkRegex('palette message reports peak', notifications[0].message, /^🔴 DeepSeek: peak right now \(×2\)\. Off-peak in \d/)
+checkRegex('palette message carries the clock', notifications[0].message, /\(\d{2}:\d{2} (UTC|GMT[+-]\d{1,2})\)$/)
+
+Date.now = () => Date.parse('2026-09-19T12:00:00Z')
+contributions.find(c => c.id === 'status').data.run()
+
+checkRegex('palette message reports off-peak on a weekend', notifications[1].message, /^🟢 DeepSeek: off-peak right now \(−50%\)\. Peak in \d/)
 
 Date.now = realNow
 globalThis.setInterval = realSetInterval
 
-console.log(`\n${checks - failures}/${checks} checks passed`)
+console.log(`\n${zone}: ${checks - failures}/${checks} checks passed`)
 
 process.exit(failures ? 1 : 0)

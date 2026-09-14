@@ -5,31 +5,37 @@ status bar gets a chip that answers one question at a glance — **is DeepSeek o
 peak tariff right now?**
 
 ```
-🔴 peak · 3:44       → peak, double price, 3h44m left until off-peak returns
+🔴 peak · 3:32       → peak, double price, 3h32m left until off-peak returns
 🟢 off-peak · 30m    → half price, peak starts in 30 minutes
 ```
 
-The countdown is **live**: the chip reticks every second (the label changes once a
-minute, the detail panel counts seconds down).
+The countdown is **live**: the chip reticks every second — the label changes once a
+minute, and the detail panel counts the seconds down.
 
-Click the chip for the detail panel:
+Click the chip for a compact panel — four lines, no tabs, no settings:
 
-- wall-clock time in the selected timezone (default **MSK**), weekday and date;
-- the live countdown to the next tariff switch, with the exact switch time;
-- the upcoming peak windows with real timestamps in the selected timezone;
-- a timezone picker — MSK / UTC / Beijing / Berlin / NY / System — persisted per plugin
-  across restarts;
-- the schedule reminder: peak is weekdays 01:00–04:00 and 06:00–10:00 UTC, all weekend
-  is off-peak.
+```
+🔴 Peak now (price ×2)
+09:27 GMT+3 · Mon 14 Sep
+Off-peak at 13:00 — in 3 h 32 min 16 s
+Peak: weekdays 04:00–07:00 and 09:00–13:00 (your time)
+```
 
-There is also a ⌘K command, **“DeepSeek: peak or off-peak?”**, which shows the current
+There is also a ⌘K command, **“DeepSeek: peak or off-peak?”**, which shows the same
 status and countdown as a toast.
 
-## Timezone: what it does and does not change
+## Timezone: the device's own, automatically
 
-Peak / off-peak is a pure function of UTC (`Mon–Fri 01:00–04:00` and `06:00–10:00 UTC`),
-so the picker **changes the display only** — never the tariff. In MSK (UTC+3) peak falls
-on weekdays **04:00–07:00** and **09:00–13:00 MSK**.
+Times are always rendered in the timezone of the machine running the app — the plugin
+reads it from the OS, so there is nothing to pick and nothing to persist.
+
+That is the correct behaviour, not a shortcut: the DeepSeek tariff is defined in UTC
+(peak = weekdays 01:00–04:00 and 06:00–10:00 UTC), so peak / off-peak is a pure function
+of UTC and is identical in every zone. The timezone only changes how the windows read —
+in MSK (UTC+3) they show up as weekdays **04:00–07:00** and **09:00–13:00**, in Beijing as
+09:00–12:00 and 14:00–18:00. A zone far enough from UTC that a window starts on the
+previous day (New York: Sunday 21:00) gets explicit day names instead of the “weekdays”
+shorthand, so the line never lies about which day it is.
 
 ## Install
 
@@ -50,8 +56,8 @@ dialog by hand.
 Save `plugin.js` so that the folder name equals the plugin id:
 
 ```
-~/.hermes/desktop-plugins/deepseek-peak/plugin.js          # macOS / Linux
-%USERPROFILE%\.hermes\desktop-plugins\deepseek-peak\plugin.js   # Windows
+~/.hermes/desktop-plugins/deepseek-peak/plugin.js                # macOS / Linux
+%USERPROFILE%\.hermes\desktop-plugins\deepseek-peak\plugin.js    # Windows
 ```
 
 The app watches that folder: the plugin loads a couple of seconds after the file lands
@@ -71,11 +77,14 @@ cd verify && node verify.mjs
 ```
 
 The harness stands in for `@hermes/plugin-sdk`, `react` and `react/jsx-runtime`
-(`verify/node_modules/`), loads `../plugin.js` through the real ESM loader and asserts
-65 facts: peak-window boundaries (weekends, Friday → Monday, both daily windows), time
-reading in several zones, duration formatting, contribution registration, the chip
-renders, the live countdown ticking down, the timezone switch persisting to storage, and
-the palette command.
+(`verify/node_modules/`), loads `../plugin.js` through the real ESM loader, and runs the
+whole suite three times — once per timezone (`Europe/Moscow`, `UTC`, `America/New_York`) —
+because the panel prints device-local times and `TZ` is the only way to vary the zone.
+It asserts 184 facts in total: every peak-window boundary (both daily windows, the gap
+between them, weekends, Friday → Monday), wall-clock reading and zone labelling, duration
+formatting, contribution registration, the four-line panel with no switcher in it, the
+live countdown ticking down second by second, local window labels (including the
+day-shifted zone), and both palette-command messages.
 
 ## Tariff schedule
 
