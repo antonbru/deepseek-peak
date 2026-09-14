@@ -21,6 +21,8 @@ Off-peak at 13:00 — in 3 h 32 min 16 s
 Peak: weekdays 04:00–07:00 and 09:00–13:00 (your time)
 ```
 
+![The status-bar chip with its detail panel open above it](docs/panel.png)
+
 There is also a ⌘K command, **“DeepSeek: peak or off-peak?”**, which shows the same
 status and countdown as a toast.
 
