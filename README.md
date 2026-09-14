@@ -39,17 +39,36 @@ shorthand, so the line never lies about which day it is.
 
 ## Install
 
-### One-click (from this repository)
+### From GitHub, inside the desktop app
 
-Open this link with Hermes Desktop running:
+Hermes Desktop can install a plugin straight from a repository — no clone, no file
+copying:
+
+1. In the app open **Capabilities → Plugins** (Settings → Plugins in older builds) and
+   click **Install plugin**.
+2. Paste the repository into the **Repository** field — `antonbru/deepseek-peak` (or the
+   full `https://github.com/antonbru/deepseek-peak`).
+3. Press **Review repository**. The app probes the repo and shows what it ships: one
+   desktop component, `deepseek-peak`.
+4. Confirm the install. The app clones the repo and copies the plugin into its own
+   `desktop-plugins/` folder; the chip shows up in the status bar a couple of seconds
+   later. The toggle in **Capabilities → Plugins** stays under your control.
+
+![The Install plugin dialog: the Repository field and the Review repository button](docs/install-dialog.png)
+
+*The install dialog — the repository field is the only thing you touch.*
+
+Prefer to skip the typing? The same flow, pre-filled:
 
 ```
 hermes://plugin/install?repo=antonbru/deepseek-peak&enable=1
 ```
 
-The app shows a confirmation dialog, clones the repo and copies the plugin into its own
-`desktop-plugins/` folder. Alternatively pass `antonbru/deepseek-peak` to the install
-dialog by hand.
+Already installed and want the newest version? Add `force=1` to replace the existing copy:
+
+```
+hermes://plugin/install?repo=antonbru/deepseek-peak&force=1&enable=1
+```
 
 ### Manual
 
