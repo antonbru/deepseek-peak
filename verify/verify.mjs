@@ -4,6 +4,8 @@
  * Loads the plugin through the real ESM loader with stand-ins for
  * `@hermes/plugin-sdk` / `react` / `react/jsx-runtime` (node_modules here), so
  * import errors, missing identifiers and logic bugs surface without the app.
+ *
+ * Run: node verify.mjs   (from this directory)
  */
 import { copyFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -18,7 +20,14 @@ const here = dirname(fileURLToPath(import.meta.url))
 
 copyFileSync(join(here, '..', 'plugin.js'), join(here, 'plugin.js'))
 
-const { default: plugin, humanDuration, shortDuration, tariffAt, tzClock } = await import('./plugin.js')
+const {
+  default: plugin,
+  humanDuration,
+  preciseDuration,
+  shortDuration,
+  tariffAt,
+  tzClock
+} = await import('./plugin.js')
 
 let failures = 0
 let checks = 0
@@ -78,15 +87,20 @@ for (const [iso, peak, changeIso, label] of CASES) {
 
 check('tzClock MSK time', tzClock(NOON, 'Europe/Moscow').time, '09:08')
 check('tzClock MSK weekday', tzClock(NOON, 'Europe/Moscow').weekday, 1)
-check('tzClock MSK stamp', tzClock(NOON, 'Europe/Moscow').stamp, '14.09')
+check('tzClock MSK stamp', tzClock(NOON, 'Europe/Moscow').stamp, 'Mon 14 Sep')
 check('tzClock UTC time', tzClock(NOON, 'UTC').time, '06:08')
 check('tzClock Beijing time', tzClock(NOON, 'Asia/Shanghai').time, '14:08')
 
-check('humanDuration 3h51m', humanDuration(3 * 3_600_000 + 51 * 60_000), '3 ч 51 мин')
-check('humanDuration 1h', humanDuration(3_600_000), '1 ч')
-check('humanDuration 51m', humanDuration(51 * 60_000), '51 мин')
+/* ------------------------------------------------------------- formatting */
+
+check('humanDuration 3h51m', humanDuration(3 * 3_600_000 + 51 * 60_000), '3 h 51 min')
+check('humanDuration 1h', humanDuration(3_600_000), '1 h')
+check('humanDuration 51m', humanDuration(51 * 60_000), '51 min')
+check('preciseDuration 3h51m12s', preciseDuration(3 * 3_600_000 + 51 * 60_000 + 12_000), '3 h 51 min 12 s')
+check('preciseDuration 1m30s', preciseDuration(90_000), '1 min 30 s')
+check('preciseDuration 45s', preciseDuration(45_000), '45 s')
 check('shortDuration 3h51m', shortDuration(3 * 3_600_000 + 51 * 60_000), '3:51')
-check('shortDuration 30m', shortDuration(30 * 60_000), '30м')
+check('shortDuration 30m', shortDuration(30 * 60_000), '30m')
 
 /* ------------------------------------------------------------ plugin wiring */
 
@@ -125,6 +139,7 @@ check('chip area', contributions.find(c => c.id === 'chip').area, 'statusBar.rig
 /* ------------------------------------------------------------- rendering */
 
 const realNow = Date.now
+const realSetInterval = globalThis.setInterval
 
 function collectStrings(node, out = []) {
   if (typeof node === 'string') {
@@ -162,6 +177,15 @@ function findElement(node, predicate) {
   return findElement(node.props && node.props.children, predicate)
 }
 
+const intervals = []
+
+globalThis.setInterval = (fn, delay) => {
+  intervals.push(delay)
+
+  return 0
+}
+globalThis.clearInterval = () => {}
+
 function renderChip(ms) {
   Date.now = () => ms
   const chip = contributions.find(c => c.id === 'chip')
@@ -172,21 +196,27 @@ function renderChip(ms) {
 }
 
 const peakView = renderChip(NOON)
-checkMatch('chip shows peak', peakView.text, '🔴 пик · 3:52')
-checkMatch('popover headline', peakView.text, 'Сейчас пик (цена ×2)')
-checkMatch('popover clock in MSK', peakView.text, '09:08 МСК')
-checkMatch('popover current window', peakView.text, 'сегодня 09:00–13:00')
-checkMatch('popover window running marker', peakView.text, 'идёт')
-checkMatch('popover schedule note', peakView.text, '01:00–04:00 и 06:00–10:00 UTC')
+check('chip reticks every second', intervals, [1000])
+checkMatch('chip shows peak', peakView.text, '🔴 peak · 3:52')
+checkMatch('popover headline', peakView.text, 'Peak now (price ×2)')
+checkMatch('popover clock in MSK', peakView.text, '09:08 MSK · Mon 14 Sep')
+checkMatch('popover countdown to off-peak', peakView.text, 'Off-peak at 13:00 MSK — in 3 h 52 min 0 s')
+checkMatch('popover current window', peakView.text, 'today 09:00–13:00')
+checkMatch('popover window running marker', peakView.text, 'running now')
+checkMatch('popover schedule note', peakView.text, 'weekdays 01:00–04:00 and 06:00–10:00 UTC')
+checkMatch('popover timezone picker label', peakView.text, 'Timezone')
+
+const tickedView = renderChip(NOON + 6_000)
+checkMatch('countdown ticks down with the clock', tickedView.text, 'Off-peak at 13:00 MSK — in 3 h 51 min 54 s')
 
 const offPeakView = renderChip(Date.parse('2026-09-14T00:30:00Z'))
-checkMatch('chip shows off-peak + countdown', offPeakView.text, '🟢 офф-пик · 30м')
-checkMatch('popover next peak line', offPeakView.text, 'Пик в 04:00 МСК')
-checkMatch('popover upcoming window', offPeakView.text, 'сегодня 04:00–07:00')
+checkMatch('chip shows off-peak + countdown', offPeakView.text, '🟢 off-peak · 30m')
+checkMatch('popover next peak line', offPeakView.text, 'Peak at 04:00 MSK')
+checkMatch('popover upcoming window', offPeakView.text, 'today 04:00–07:00')
 
 const weekendView = renderChip(Date.parse('2026-09-19T12:00:00Z'))
-checkMatch('weekend off-peak', weekendView.text, '🟢 офф-пик')
-checkMatch('weekend next peak is Monday', weekendView.text, 'пн 21.09 04:00–07:00')
+checkMatch('weekend off-peak', weekendView.text, '🟢 off-peak')
+checkMatch('weekend next peak is Monday', weekendView.text, 'Mon 21 Sep 04:00–07:00')
 
 /* -------------------------------------------------------- timezone picker */
 
@@ -200,7 +230,7 @@ segment.props.onChange('UTC')
 const utcView = renderChip(NOON)
 
 checkMatch('chip follows selected timezone', utcView.text, '06:08 UTC')
-checkMatch('windows re-render in UTC', utcView.text, 'сегодня 06:00–10:00')
+checkMatch('windows re-render in UTC', utcView.text, 'today 06:00–10:00')
 check('timezone persisted to storage', storage.get('timezone'), 'UTC')
 
 /* ----------------------------------------------------------- palette run */
@@ -208,10 +238,11 @@ check('timezone persisted to storage', storage.get('timezone'), 'UTC')
 notifications.length = 0
 contributions.find(c => c.id === 'status').data.run()
 check('palette command notifies once', notifications.length, 1)
-checkMatch('palette message mentions peak', notifications[0].message, 'сейчас пик')
-checkMatch('palette message has MSK clock', notifications[0].message, '(06:08 UTC)')
+checkMatch('palette message mentions peak', notifications[0].message, 'peak right now')
+checkMatch('palette message carries the clock', notifications[0].message, '(06:08 UTC)')
 
 Date.now = realNow
+globalThis.setInterval = realSetInterval
 
 console.log(`\n${checks - failures}/${checks} checks passed`)
 

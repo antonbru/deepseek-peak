@@ -1,26 +1,30 @@
 /**
- * DeepSeek peak / off-peak status chip.
+ * DeepSeek peak / off-peak status chip for the Hermes Desktop status bar.
  *
- * A Hermes Desktop disk plugin: the status bar gains a chip that answers one
- * question at a glance — is DeepSeek on its peak tariff right now?
+ * Answers one question at a glance: is DeepSeek on its peak tariff right now?
  *
- *   🔴 пик · 3:51      → peak, 3h51m left at double price
- *   🟢 офф-пик · 5:12  → off-peak (50%), next peak starts in 5h12m
+ *   🔴 peak · 3:44       → peak, double price, 3h44m until off-peak returns
+ *   🟢 off-peak · 30m    → half price, peak starts in 30 minutes
  *
- * Click the chip for the detail panel: current wall-clock time in the selected
- * timezone, the countdown, the next peak windows with real timestamps, the
- * tariff schedule, and a timezone picker (persisted per plugin).
+ * The countdown is live: the chip reticks every second (its label changes once
+ * a minute, the detail panel shows seconds counting down).
  *
- * Tariff (api-docs.deepseek.com, checked 10.09.2026): peak = Mon–Fri
- * 01:00–04:00 and 06:00–10:00 UTC; everything else — including all weekend —
- * is off-peak at half price. The state is therefore a pure function of UTC;
- * the timezone only changes how the windows are *displayed*.
+ * Click the chip for the detail panel: wall-clock time in the selected
+ * timezone, the live countdown to the next tariff switch, the upcoming peak
+ * windows with real timestamps, the tariff schedule, and a timezone picker
+ * (persisted per plugin).
+ *
+ * Tariff (api-docs.deepseek.com/quick_start/pricing, checked 10.09.2026):
+ * peak = Mon–Fri 01:00–04:00 and 06:00–10:00 UTC; everything else — including
+ * all weekend — is off-peak at half price. The state is therefore a pure
+ * function of UTC; the timezone only changes how windows are *displayed*.
  *
  * Install: <HERMES_HOME>/desktop-plugins/deepseek-peak/plugin.js
  * (folder name must equal the plugin id). Hot reloads on save.
  */
 
 import {
+  Button,
   PALETTE_AREA,
   Popover,
   PopoverContent,
@@ -31,8 +35,7 @@ import {
   cn,
   haptic,
   host,
-  useValue,
-  Button
+  useValue
 } from '@hermes/plugin-sdk'
 import { useEffect, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
@@ -43,7 +46,7 @@ const DEFAULT_TZ = 'Europe/Moscow'
 const SYSTEM_TZ = 'system'
 const DAY_MS = 86_400_000
 const MIN_MS = 60_000
-const TICK_MS = 10_000
+const TICK_MS = 1000
 
 /** Peak windows as [startMinute, endMinute) of a UTC weekday. */
 const PEAK_WINDOWS_UTC = [
@@ -51,15 +54,16 @@ const PEAK_WINDOWS_UTC = [
   [360, 600] // 06:00–10:00 UTC
 ]
 
-const WEEKDAYS_RU = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб']
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 const TZ_OPTIONS = [
-  { id: 'Europe/Moscow', label: 'МСК' },
+  { id: 'Europe/Moscow', label: 'MSK' },
   { id: 'UTC', label: 'UTC' },
-  { id: 'Asia/Shanghai', label: 'Пекин' },
-  { id: 'Europe/Berlin', label: 'Берлин' },
+  { id: 'Asia/Shanghai', label: 'Beijing' },
+  { id: 'Europe/Berlin', label: 'Berlin' },
   { id: 'America/New_York', label: 'NY' },
-  { id: SYSTEM_TZ, label: 'Система' }
+  { id: SYSTEM_TZ, label: 'System' }
 ]
 
 /** Selected timezone, restored from plugin storage on load. */
@@ -92,8 +96,8 @@ export function peakWindows(nowMs) {
 }
 
 /**
- * Tariff state at an instant. `changesAt` is the next boundary: when peak it is
- * the moment the discount returns, otherwise the moment peak begins.
+ * Tariff state at an instant. `changesAt` is the next boundary: while peak it
+ * is the moment the discount returns, otherwise the moment peak begins.
  */
 export function tariffAt(nowMs) {
   const windows = peakWindows(nowMs)
@@ -124,44 +128,65 @@ export function tzClock(ms, timeZone) {
       day: '2-digit'
     }).format(new Date(ms))
     const [year, month, day] = dateKey.split('-').map(Number)
+    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay()
 
     return {
       time,
       dateKey,
-      weekday: new Date(Date.UTC(year, month - 1, day)).getUTCDay(),
-      stamp: `${String(day).padStart(2, '0')}.${String(month).padStart(2, '0')}`
+      weekday,
+      month,
+      day,
+      stamp: `${WEEKDAYS[weekday]} ${day} ${MONTHS[month - 1]}`
     }
   } catch {
     const d = new Date(ms)
+    const weekday = d.getUTCDay()
 
     return {
       time: `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`,
       dateKey: d.toISOString().slice(0, 10),
-      weekday: d.getUTCDay(),
-      stamp: `${String(d.getUTCDate()).padStart(2, '0')}.${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+      weekday,
+      month: d.getUTCMonth() + 1,
+      day: d.getUTCDate(),
+      stamp: `${WEEKDAYS[weekday]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`
     }
   }
 }
 
-/** "3 ч 51 мин" / "51 мин" / "2 ч". */
+/** "3 h 44 min" / "44 min" / "2 h". */
 export function humanDuration(ms) {
   const totalMinutes = Math.max(0, Math.round(ms / MIN_MS))
   const hours = Math.floor(totalMinutes / 60)
   const minutes = totalMinutes % 60
 
-  if (!hours) return `${minutes} мин`
-  if (!minutes) return `${hours} ч`
+  if (!hours) return `${minutes} min`
+  if (!minutes) return `${hours} h`
 
-  return `${hours} ч ${minutes} мин`
+  return `${hours} h ${minutes} min`
 }
 
-/** "3:51" / "51м" — the chip's compact countdown. */
+/** "3 h 44 min 12 s" — the live countdown shown in the detail panel. */
+export function preciseDuration(ms) {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  const parts = []
+
+  if (hours) parts.push(`${hours} h`)
+  if (hours || minutes) parts.push(`${minutes} min`)
+  parts.push(`${seconds} s`)
+
+  return parts.join(' ')
+}
+
+/** "3:44" / "44m" — the chip's compact countdown. */
 export function shortDuration(ms) {
   const totalMinutes = Math.max(0, Math.round(ms / MIN_MS))
   const hours = Math.floor(totalMinutes / 60)
   const minutes = totalMinutes % 60
 
-  if (!hours) return `${minutes}м`
+  if (!hours) return `${minutes}m`
 
   return `${hours}:${String(minutes).padStart(2, '0')}`
 }
@@ -187,10 +212,10 @@ function dayLabel(ms, timeZone, nowMs) {
   const today = tzClock(nowMs, timeZone)
   const tomorrow = tzClock(nowMs + DAY_MS, timeZone)
 
-  if (target.dateKey === today.dateKey) return 'сегодня'
-  if (target.dateKey === tomorrow.dateKey) return 'завтра'
+  if (target.dateKey === today.dateKey) return 'today'
+  if (target.dateKey === tomorrow.dateKey) return 'tomorrow'
 
-  return `${WEEKDAYS_RU[target.weekday]} ${target.stamp}`
+  return target.stamp
 }
 
 function windowLine(window, timeZone, nowMs) {
@@ -199,7 +224,7 @@ function windowLine(window, timeZone, nowMs) {
   const label = `${dayLabel(window.start, timeZone, nowMs)} ${start.time}–${end.time}`
   const running = nowMs >= window.start && nowMs < window.end
 
-  return running ? `${label} — идёт` : label
+  return running ? `${label} — running now` : label
 }
 
 function summary(nowMs, tzValue) {
@@ -208,12 +233,12 @@ function summary(nowMs, tzValue) {
   const clock = tzClock(nowMs, timeZone)
   const suffix = `(${clock.time} ${tzLabel(tzValue)})`
 
-  if (!state.changesAt) return `DeepSeek: тариф не определён ${suffix}`
+  if (!state.changesAt) return `DeepSeek: tariff window not found ${suffix}`
   if (state.peak) {
-    return `🔴 DeepSeek: сейчас пик (×2). Офф-пик через ${humanDuration(state.changesAt - nowMs)} ${suffix}`
+    return `🔴 DeepSeek: peak right now (×2). Off-peak in ${humanDuration(state.changesAt - nowMs)} ${suffix}`
   }
 
-  return `🟢 DeepSeek: сейчас офф-пик (−50%). Пик через ${humanDuration(state.changesAt - nowMs)} ${suffix}`
+  return `🟢 DeepSeek: off-peak right now (−50%). Peak in ${humanDuration(state.changesAt - nowMs)} ${suffix}`
 }
 
 /* --------------------------------------------------------------- widgets */
@@ -244,23 +269,25 @@ function PeakChip() {
   const state = tariffAt(now)
   const clock = tzClock(now, timeZone)
   const countdown = state.changesAt ? shortDuration(state.changesAt - now) : '—'
-  const label = state.peak ? `🔴 пик · ${countdown}` : `🟢 офф-пик · ${countdown}`
+  const label = state.peak ? `🔴 peak · ${countdown}` : `🟢 off-peak · ${countdown}`
 
-  const headline = state.peak ? '🔴 Сейчас пик (цена ×2)' : '🟢 Сейчас офф-пик (−50%)'
+  const headline = state.peak ? '🔴 Peak now (price ×2)' : '🟢 Off-peak now (−50%)'
   const boundary = state.changesAt
     ? state.peak
-      ? `Офф-пик в ${tzClock(state.changesAt, timeZone).time} ${tzLabel(tzValue)} — через ${humanDuration(state.changesAt - now)}`
-      : `Пик в ${tzClock(state.changesAt, timeZone).time} ${tzLabel(tzValue)} — через ${humanDuration(state.changesAt - now)}`
-    : 'Ближайшее окно пика не найдено'
+      ? `Off-peak at ${tzClock(state.changesAt, timeZone).time} ${tzLabel(tzValue)} — in ${preciseDuration(state.changesAt - now)}`
+      : `Peak at ${tzClock(state.changesAt, timeZone).time} ${tzLabel(tzValue)} — in ${preciseDuration(state.changesAt - now)}`
+    : 'No upcoming peak window found'
   const upcoming = state.windows.filter(w => w.end > now).slice(0, 3)
-  const options = TZ_OPTIONS.map(o => (o.id === SYSTEM_TZ ? { ...o, label: `Система (${resolveTimeZone(SYSTEM_TZ)})` } : o))
+  const options = TZ_OPTIONS.map(o =>
+    o.id === SYSTEM_TZ ? { ...o, label: `${o.label} (${resolveTimeZone(SYSTEM_TZ)})` } : o
+  )
 
   return jsxs(Popover, {
     children: [
       jsx(PopoverTrigger, {
         asChild: true,
         children: jsx(Button, {
-          'aria-label': state.peak ? 'DeepSeek: сейчас пик' : 'DeepSeek: сейчас офф-пик',
+          'aria-label': state.peak ? 'DeepSeek: peak right now' : 'DeepSeek: off-peak right now',
           className: cn('gap-1 text-[0.6875rem]'),
           size: 'micro',
           title: summary(now, tzValue),
@@ -277,13 +304,13 @@ function PeakChip() {
           children: [
             jsx('div', { className: 'font-medium', children: headline }),
             jsx(DetailRow, {
-              children: `${clock.time} ${tzLabel(tzValue)} · ${WEEKDAYS_RU[clock.weekday]}, ${clock.stamp}`
+              children: `${clock.time} ${tzLabel(tzValue)} · ${clock.stamp}`
             }),
             jsx(DetailRow, { children: boundary }),
             jsxs('div', {
               className: 'flex flex-col gap-0.5',
               children: [
-                jsx(DetailRow, { children: 'Ближайшие окна пика:' }),
+                jsx(DetailRow, { children: 'Upcoming peak windows:' }),
                 ...upcoming.map(window =>
                   jsx(DetailRow, {
                     muted: true,
@@ -294,12 +321,12 @@ function PeakChip() {
             }),
             jsx(DetailRow, {
               muted: true,
-              children: 'Пик DeepSeek: будни 01:00–04:00 и 06:00–10:00 UTC. Выходные целиком офф-пик.'
+              children: 'DeepSeek peak: weekdays 01:00–04:00 and 06:00–10:00 UTC. All weekend is off-peak.'
             }),
             jsxs('div', {
               className: 'flex flex-col gap-1',
               children: [
-                jsx(DetailRow, { children: 'Часовой пояс' }),
+                jsx(DetailRow, { children: 'Timezone' }),
                 jsx(SegmentedControl, {
                   onChange: id => {
                     haptic('tap')
@@ -339,8 +366,8 @@ export default {
       area: PALETTE_AREA,
       data: {
         id: 'deepseek-peak.status',
-        label: 'DeepSeek: пик или офф-пик?',
-        keywords: ['deepseek', 'пик', 'офф-пик', 'off-peak', 'тариф', 'цена', 'peak'],
+        label: 'DeepSeek: peak or off-peak?',
+        keywords: ['deepseek', 'peak', 'off-peak', 'tariff', 'price', 'countdown'],
         run: () => {
           haptic('tap')
           host.notify({ kind: 'info', message: summary(Date.now(), $tz.get()) })

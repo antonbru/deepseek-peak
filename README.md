@@ -1,77 +1,87 @@
-# deepseek-peak — чип «пик / офф-пик» для Hermes Desktop
+# deepseek-peak — a peak / off-peak chip for the Hermes Desktop status bar
 
-Плагин для нижней панели (status bar) Hermes Desktop: показывает, действует ли сейчас
-**пиковый тариф DeepSeek** или офф-пик, и сколько осталось до смены окна.
-
-```
-🔴 пик · 3:52        — пик, цена ×2, до офф-пика 3 ч 52 мин
-🟢 офф-пик · 30м     — половина цены, до пика 30 мин
-```
-
-Клик по чипу открывает панель с деталями:
-
-- текущее время в выбранном часовом поясе (по умолчанию **МСК**), день недели, дата;
-- сколько осталось до смены окна и во сколько оно наступает;
-- ближайшие три окна пика с реальными датами и временем в выбранном поясе;
-- переключатель часового пояса: МСК / UTC / Пекин / Берлин / NY / системный
-  (сохраняется в storage плагина, переживает перезапуск);
-- напоминание расписания: пик — будни 01:00–04:00 и 06:00–10:00 UTC, выходные целиком офф-пик.
-
-Плюс команда в ⌘K: **«DeepSeek: пик или офф-пик?»** — тост с текущим статусом и обратным отсчётом.
-
-## Установка
-
-Положить файл так, чтобы имя папки совпадало с id плагина:
+A [Hermes Desktop](https://hermes-agent.nousresearch.com/docs) disk plugin: the bottom
+status bar gets a chip that answers one question at a glance — **is DeepSeek on its
+peak tariff right now?**
 
 ```
-~/.hermes/desktop-plugins/deepseek-peak/plugin.js
+🔴 peak · 3:44       → peak, double price, 3h44m left until off-peak returns
+🟢 off-peak · 30m    → half price, peak starts in 30 minutes
 ```
 
-Нюансы по системам:
+The countdown is **live**: the chip reticks every second (the label changes once a
+minute, the detail panel counts seconds down).
 
-- **macOS / Linux:** `~/.hermes/desktop-plugins/deepseek-peak/plugin.js`
-- **Windows:** `%USERPROFILE%\.hermes\desktop-plugins\deepseek-peak\plugin.js`
+Click the chip for the detail panel:
 
-Приложение следит за папкой: плагин подхватится через пару секунд после сохранения файла.
-Если не появился — ⌘K → **Reload desktop plugins**. Ошибка загрузки показывается тостом
-с названием причины.
+- wall-clock time in the selected timezone (default **MSK**), weekday and date;
+- the live countdown to the next tariff switch, with the exact switch time;
+- the upcoming peak windows with real timestamps in the selected timezone;
+- a timezone picker — MSK / UTC / Beijing / Berlin / NY / System — persisted per plugin
+  across restarts;
+- the schedule reminder: peak is weekdays 01:00–04:00 and 06:00–10:00 UTC, all weekend
+  is off-peak.
 
-Плагин **app-level**: он живёт на машине, где запущено приложение, и работает с любым
-gateway, включая удалённый (как `hermes.antonb.ru`). Файл на сервере gateway
-приложению не виден — важен локальный `~/.hermes`.
+There is also a ⌘K command, **“DeepSeek: peak or off-peak?”**, which shows the current
+status and countdown as a toast.
 
-Включение/выключение — **Capabilities → Plugins** (по умолчанию включён).
+## Timezone: what it does and does not change
 
-## Часовой пояс: что важно
+Peak / off-peak is a pure function of UTC (`Mon–Fri 01:00–04:00` and `06:00–10:00 UTC`),
+so the picker **changes the display only** — never the tariff. In MSK (UTC+3) peak falls
+on weekdays **04:00–07:00** and **09:00–13:00 MSK**.
 
-Статус «пик / не пик» — чистая функция от UTC (`Mon–Fri 01:00–04:00` и `06:00–10:00 UTC`),
-поэтому переключатель пояса **меняет только отображение**, а не сам тариф.
-МСК = UTC+3: пик приходится на будни **04:00–07:00** и **09:00–13:00 МСК**.
+## Install
 
-## Проверка без приложения
+### One-click (from this repository)
+
+Open this link with Hermes Desktop running:
+
+```
+hermes://plugin/install?repo=antonbru/deepseek-peak&enable=1
+```
+
+The app shows a confirmation dialog, clones the repo and copies the plugin into its own
+`desktop-plugins/` folder. Alternatively pass `antonbru/deepseek-peak` to the install
+dialog by hand.
+
+### Manual
+
+Save `plugin.js` so that the folder name equals the plugin id:
+
+```
+~/.hermes/desktop-plugins/deepseek-peak/plugin.js          # macOS / Linux
+%USERPROFILE%\.hermes\desktop-plugins\deepseek-peak\plugin.js   # Windows
+```
+
+The app watches that folder: the plugin loads a couple of seconds after the file lands
+and hot-reloads on every later save. If it does not appear, run ⌘K → **Reload desktop
+plugins**; a load failure is reported as a toast naming the reason.
+
+Desktop plugins are **app-level** — they live on the machine running the app and serve
+every gateway it connects to, including a remote one. A gateway's own
+`~/.hermes/desktop-plugins/` is not visible to the app, so the file has to exist locally.
+
+Enable or disable it in **Capabilities → Plugins** (enabled by default).
+
+## Verify without the app
 
 ```bash
 cd verify && node verify.mjs
 ```
 
-Стенд подменяет `@hermes/plugin-sdk`, `react` и `react/jsx-runtime` заглушками
-(`verify/node_modules/`), грузит `../plugin.js` реальным ESM-загрузчиком и проверяет
-58 утверждений: границы окон пика (включая выходные и пятницу→понедельник), чтение
-времени в поясах, форматирование длительностей, регистрацию контрибуций, рендер чипа и
-панели, смену пояса с записью в storage и команду палитры.
+The harness stands in for `@hermes/plugin-sdk`, `react` and `react/jsx-runtime`
+(`verify/node_modules/`), loads `../plugin.js` through the real ESM loader and asserts
+65 facts: peak-window boundaries (weekends, Friday → Monday, both daily windows), time
+reading in several zones, duration formatting, contribution registration, the chip
+renders, the live countdown ticking down, the timezone switch persisting to storage, and
+the palette command.
 
-## Установка одной ссылкой (если репозиторий опубликован)
+## Tariff schedule
 
-```html
-<a href="hermes://plugin/install?repo=owner/repo&enable=1">Install in Hermes</a>
-```
+Source: api-docs.deepseek.com/quick_start/pricing (checked 10.09.2026). If the windows
+change, edit `PEAK_WINDOWS_UTC` in `plugin.js` — minutes from UTC midnight, `[start, end)`.
 
-Для этого папку нужно положить в git-репозиторий (файл `plugin.js` в корне или в
-`desktop/`), а в приложении открыть ссылку — приложение покажет диалог и скопирует
-плагин в `desktop-plugins/` само. Можно передать и просто `owner/repo` в диалоге установки.
+## License
 
-## Расписание тарифа
-
-Источник: api-docs.deepseek.com/quick_start/pricing (проверено 10.09.2026).
-Изменятся цены/окна — правится константа `PEAK_WINDOWS_UTC` в `plugin.js`
-(минуты от полуночи UTC, `[начало, конец)`).
+MIT — see `LICENSE`.
